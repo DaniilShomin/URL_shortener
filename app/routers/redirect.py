@@ -1,12 +1,12 @@
 from fastapi import APIRouter, Depends
 from fastapi.responses import RedirectResponse
-from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 from fastapi import HTTPException, status
 
-from app.db import get_redis, get_session
+from app.db import get_cache_backend, get_session
 from app.exceptions import ShortURLNotFoundError
 from app.services import resolve_short_url
+from app.storage import CacheBackend
 
 router = APIRouter(tags=["redirect"])
 RESERVED_SHORT_IDS = {"health", "shorten", "stats", "docs", "openapi.json", "redoc"}
@@ -16,7 +16,7 @@ RESERVED_SHORT_IDS = {"health", "shorten", "stats", "docs", "openapi.json", "red
 async def redirect_to_url(
     short_id: str,
     session: AsyncSession = Depends(get_session),
-    redis: Redis = Depends(get_redis),
+    cache: CacheBackend = Depends(get_cache_backend),
 ) -> RedirectResponse:
     if short_id in RESERVED_SHORT_IDS:
         raise HTTPException(
@@ -24,7 +24,7 @@ async def redirect_to_url(
             detail="Short URL not found",
         )
     try:
-        original_url = await resolve_short_url(session, redis, short_id)
+        original_url = await resolve_short_url(session, cache, short_id)
     except ShortURLNotFoundError as error:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

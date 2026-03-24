@@ -2,7 +2,6 @@ import secrets
 import string
 
 from fastapi import Request
-from redis.asyncio import Redis
 from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -14,6 +13,7 @@ from app.exceptions import (
     ShortURLNotFoundError,
 )
 from app.models import ShortURL
+from app.storage import CacheBackend, RateLimiterBackend
 
 settings = get_settings()
 ALPHABET = string.ascii_letters + string.digits
@@ -39,13 +39,12 @@ def get_client_identifier(request: Request) -> str:
     return "unknown"
 
 
-async def enforce_rate_limit(redis: Redis, client_id: str) -> None:
+async def enforce_rate_limit(rate_limiter: RateLimiterBackend, client_id: str) -> None:
     key = get_rate_limit_key(client_id)
-    current_count = await redis.incr(key)
-    ttl = await redis.ttl(key)
-
-    if ttl is None or ttl < 0:
-        await redis.expire(key, settings.rate_limit_window_seconds)
+    current_count, _ = await rate_limiter.increment(
+        key,
+        settings.rate_limit_window_seconds,
+    )
 
     if current_count > settings.rate_limit_requests:
         raise RateLimitExceededError("Rate limit exceeded")
@@ -53,7 +52,7 @@ async def enforce_rate_limit(redis: Redis, client_id: str) -> None:
 
 async def create_short_url(
     session: AsyncSession,
-    redis: Redis,
+    cache: CacheBackend,
     original_url: str,
 ) -> ShortURL:
     for _ in range(10):
@@ -68,7 +67,7 @@ async def create_short_url(
 
         await session.refresh(short_url)
         try:
-            await cache_original_url(redis, short_id, original_url)
+            await cache_original_url(cache, short_id, original_url)
         except Exception:
             pass
         return short_url
@@ -76,20 +75,20 @@ async def create_short_url(
     raise ShortURLGenerationError("Unable to generate unique short id")
 
 
-async def cache_original_url(redis: Redis, short_id: str, original_url: str) -> None:
-    await redis.setex(
+async def cache_original_url(cache: CacheBackend, short_id: str, original_url: str) -> None:
+    await cache.set(
         get_short_url_cache_key(short_id),
-        settings.redirect_cache_ttl_seconds,
         original_url,
+        settings.redirect_cache_ttl_seconds,
     )
 
 
 async def resolve_short_url(
     session: AsyncSession,
-    redis: Redis,
+    cache: CacheBackend,
     short_id: str,
 ) -> str:
-    cached_url = await redis.get(get_short_url_cache_key(short_id))
+    cached_url = await cache.get(get_short_url_cache_key(short_id))
 
     if cached_url is not None:
         increment_result = await session.execute(
@@ -118,7 +117,7 @@ async def resolve_short_url(
 
     await session.commit()
     try:
-        await cache_original_url(redis, short_id, original_url)
+        await cache_original_url(cache, short_id, original_url)
     except Exception:
         pass
     return original_url

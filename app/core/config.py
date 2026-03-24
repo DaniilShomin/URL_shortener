@@ -14,7 +14,11 @@ class Settings(BaseSettings):
     database_url: str = Field(
         default="postgresql+asyncpg://postgres:postgres@localhost:5432/url_shortener"
     )
+    database_fallback_url: str = "sqlite+aiosqlite:///./url_shortener.db"
+    database_fallback_enabled: bool = True
     redis_url: str = "redis://localhost:6379/0"
+    cache_backend: str = "redis"
+    rate_limiter_backend: str = "redis"
     short_id_length: int = 8
     redirect_cache_ttl_seconds: int = 3600
     rate_limit_requests: int = 5

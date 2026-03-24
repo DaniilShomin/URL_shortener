@@ -14,3 +14,6 @@ wheels/
 # Cache
 .mypy_cache/
 .pytest_cache/
+
+# user-specific files
+url_shortener.db

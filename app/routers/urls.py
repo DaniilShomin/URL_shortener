@@ -1,10 +1,9 @@
 from urllib.parse import urljoin
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db import get_redis, get_session
+from app.db import get_cache_backend, get_rate_limiter_backend, get_session
 from app.exceptions import (
     RateLimitExceededError,
     ShortURLGenerationError,
@@ -17,6 +16,7 @@ from app.services import (
     get_client_identifier,
     get_short_url_stats,
 )
+from app.storage import CacheBackend, RateLimiterBackend
 
 router = APIRouter(tags=["urls"])
 
@@ -28,12 +28,13 @@ async def shorten_url(
     payload: ShortenRequest,
     request: Request,
     session: AsyncSession = Depends(get_session),
-    redis: Redis = Depends(get_redis),
+    cache: CacheBackend = Depends(get_cache_backend),
+    rate_limiter: RateLimiterBackend = Depends(get_rate_limiter_backend),
 ) -> ShortenResponse:
     client_id = get_client_identifier(request)
     try:
-        await enforce_rate_limit(redis, client_id)
-        short_url = await create_short_url(session, redis, str(payload.url))
+        await enforce_rate_limit(rate_limiter, client_id)
+        short_url = await create_short_url(session, cache, str(payload.url))
     except RateLimitExceededError as error:
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,

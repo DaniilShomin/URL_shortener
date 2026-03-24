@@ -6,9 +6,12 @@ from app.core.config import settings
 from app.db import (
     check_database_connection,
     close_database_engine,
-    close_redis,
-    get_redis,
-    init_redis,
+    close_storage,
+    get_database_status,
+    get_cache_backend,
+    get_rate_limiter_backend,
+    init_database,
+    init_storage,
 )
 from app.routers.redirect import router as redirect_router
 from app.routers.urls import router as urls_router
@@ -16,10 +19,10 @@ from app.routers.urls import router as urls_router
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    await check_database_connection()
-    await init_redis()
+    await init_database()
+    await init_storage()
     yield
-    await close_redis()
+    await close_storage()
     await close_database_engine()
 
 
@@ -33,7 +36,7 @@ async def healthcheck() -> dict[str, object]:
 
     try:
         await check_database_connection()
-        services["database"] = "ok"
+        services["database"] = get_database_status()
     except Exception as error:
         services["database"] = "error"
         raise HTTPException(
@@ -42,14 +45,16 @@ async def healthcheck() -> dict[str, object]:
         ) from error
 
     try:
-        await get_redis().ping()
-        services["redis"] = "ok"
-    except Exception as error:
-        services["redis"] = "error"
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail={"status": "error", "services": services},
-        ) from error
+        services["cache"] = "ok" if await get_cache_backend().ping() else "degraded"
+    except Exception:
+        services["cache"] = "error"
+
+    try:
+        services["rate_limiter"] = (
+            "ok" if await get_rate_limiter_backend().ping() else "degraded"
+        )
+    except Exception:
+        services["rate_limiter"] = "error"
 
     return {"status": "ok", "services": services}
 
